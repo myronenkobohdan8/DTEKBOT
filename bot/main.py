@@ -95,12 +95,14 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--fixture")
+    ap.add_argument("--force", action="store_true", help="опублікувати поточний графік, навіть якщо змін немає")
     args = ap.parse_args(argv)
 
     token = os.environ.get("BOT_TOKEN")
     chat = os.environ.get("CHANNEL_ID")
     admin = os.environ.get("ADMIN_CHAT_ID")
     dry = args.dry_run
+    force = args.force or os.environ.get("FORCE", "").lower() == "true"
     if not dry and not (token and chat):
         print("Не задано BOT_TOKEN або CHANNEL_ID", file=sys.stderr)
         return 1
@@ -132,7 +134,10 @@ def main(argv=None) -> int:
     for date_iso in sorted(data["days"]):
         groups_on = data["days"][date_iso]
         old = days_state.get(date_iso)
-        if old is None:
+        if force:
+            if has_any_outage(groups_on):
+                plan.append((date_iso, groups_on, {}, None))
+        elif old is None:
             if not has_any_outage(groups_on):
                 continue                       # графік на цей день ще не опубліковано / відключень немає
             plan.append((date_iso, groups_on, {}, None))

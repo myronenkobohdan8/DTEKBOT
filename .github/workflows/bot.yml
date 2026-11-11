@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "*/10 * * * *"     # кожні 10 хвилин (GitHub може запускати з невеликою затримкою)
   workflow_dispatch:           # ручний запуск кнопкою
+    inputs:
+      force:
+        description: "Опублікувати поточний графік примусово (навіть без змін)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write              # щоб зберігати state.json
@@ -34,6 +39,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+          FORCE: ${{ inputs.force }}
 
       - name: Save state
         if: always()
