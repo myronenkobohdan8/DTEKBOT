@@ -1,21 +1,25 @@
-"""Головний скрипт: забрати графік -> порівняти -> намалювати -> опублікувати/оновити в Telegram.
+"""Головний скрипт: забрати графік -> порівняти -> намалювати -> опублікувати новий пост у Telegram.
 
 Запуск:  python -m bot.main            (бойовий режим, потрібні BOT_TOKEN і CHANNEL_ID)
          python -m bot.main --dry-run  (без Telegram, картинки в папку out/)
          python -m bot.main --fixture page.html   (брати дані з файлу, а не з сайту)
+
+У state.json зберігаються інтервали «світло є» (так, як їх віддає ДТЕК); на картинці й у тексті
+показуємо протилежне — періоди без світла.
 """
 import argparse
 import html as H
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 from . import telegram as tg
 from .fetch import fetch_html
 from .render import render_many
-from .schedule import (GROUPS, ParseError, day_label, diff_groups, has_any_outage,
-                       ivs_text, parse_fact)
+from .schedule import (GROUPS, ParseError, day_label_acc, diff_groups, has_any_outage,
+                       invert, parse_fact)
 
 STATE_PATH = Path(os.environ.get("STATE_PATH", "state.json"))
 KEEP_DAYS = 4
@@ -33,39 +37,49 @@ def save_state(state: dict):
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def changes_lines(changes: dict) -> list:
-    lines = []
-    for g, c in changes.items():
-        lines.append(f"• <b>{g}</b>: <s>{H.escape(ivs_text(c['prev']))}</s> → <b>{H.escape(ivs_text(c['new']))}</b>")
-    return lines
+# ---------- текст під фото ----------
+
+def _iv(iv: str) -> str:
+    return iv.replace("-", " – ")
 
 
-def build_caption(date_iso: str, update: str, groups: dict, changes: dict) -> str:
-    date_txt, weekday = day_label(date_iso)
+def _group_block(g: str, ivs: list) -> str:
+    lines = [f"<b>Черга {g}:</b>"]
+    lines += [f"• {_iv(i)}" for i in ivs] if ivs else ["• відключень немає"]
+    return "\n".join(lines)
+
+
+def _groups_text(groups_off: dict, names: list) -> str:
+    """Черги однієї пари (1.1 і 1.2) йдуть підряд, між парами — порожній рядок."""
+    pairs = {}
+    for g in names:
+        pairs.setdefault(g.split(".")[0], []).append(_group_block(g, groups_off[g]))
+    return "\n\n".join("\n".join(blocks) for blocks in pairs.values())
+
+
+def build_caption(date_iso: str, update: str, groups_off: dict, changes: dict) -> str:
+    label = day_label_acc(date_iso)
     if changes:
-        head = (f"🔄 <b>Оновлення графіка вмикань на {date_txt}</b> ({weekday})\n"
-                f"🕒 Оновлено ДТЕК: {H.escape(update)}")
+        head = f"💡 Оновлено графік відключень на {label}\n\nЗміни для наступних черг:\n"
+        body = _groups_text(groups_off, [g for g in GROUPS if g in changes])
     else:
-        head = (f"💡 <b>Графік вмикань світла на {date_txt}</b> ({weekday})\n"
-                f"🕒 Оновлено ДТЕК: {H.escape(update)}")
-    parts = [head]
-    if changes:
-        lines = changes_lines(changes)
-        names = ", ".join(changes)
-        parts.append(f"❗ <b>Змінилися черги: {names}</b>\n(було → стало)\n" + "\n".join(lines))
-    full = "\n".join(f"<b>{g}</b>: {H.escape(ivs_text(groups[g]))}" for g in GROUPS)
-    parts.append("⚡ <b>Світло є:</b>\n" + full)
-    caption = "\n\n".join(parts)
-    if len(caption) > CAPTION_LIMIT and changes:          # спершу прибираємо повний список
-        caption = "\n\n".join(parts[:2])
-    if len(caption) > CAPTION_LIMIT:                       # потім скорочуємо перелік змін
-        lines = changes_lines(changes)
-        mk = lambda ls: "\n\n".join([head, f"❗ <b>Змінилися черги: {', '.join(changes)}</b>\n(було → стало)\n"
-                                    + "\n".join(ls) + ("\n…" if len(ls) < len(lines) else "")])
-        while lines and len(mk(lines)) > CAPTION_LIMIT:
-            lines.pop()
-        caption = mk(lines)
-    return caption[:CAPTION_LIMIT]
+        head = f"💡 Графік відключень на {label}\n\n❌ Періоди вимкнень:\n\n"
+        body = _groups_text(groups_off, GROUPS)
+    return f"{head}{body}\n\n🕒 Оновлено ДТЕК: {H.escape(update)}"
+
+
+def plain_len(text: str) -> int:
+    return len(re.sub(r"<[^>]+>", "", H.unescape(text)))
+
+
+def publish(token: str, chat: str, jpg: bytes, caption: str) -> int:
+    """Фото з підписом. Якщо підпис довший за ліміт Telegram — фото з заголовком + повний текст відповіддю."""
+    if plain_len(caption) <= CAPTION_LIMIT:
+        return tg.send_photo(token, chat, jpg, caption)
+    first_line = caption.split("\n", 1)[0]
+    message_id = tg.send_photo(token, chat, jpg, first_line)
+    tg.send_text(token, chat, caption, reply_to=message_id)
+    return message_id
 
 
 def alert(token, admin_chat, text):
@@ -97,7 +111,7 @@ def main(argv=None) -> int:
     try:
         html = Path(args.fixture).read_text(encoding="utf-8") if args.fixture else fetch_html()
         data = parse_fact(html)
-    except (ParseError, RuntimeError, Exception) as e:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
         state["failures"] = state.get("failures", 0) + 1
         print(f"Помилка отримання даних (поспіль: {state['failures']}): {e}")
         if state["failures"] == FAIL_ALERT_AFTER:
@@ -114,20 +128,20 @@ def main(argv=None) -> int:
     days_state = state.setdefault("days", {})
 
     # 2. Вирішуємо, що публікувати
-    plan = []   # (date_iso, groups, changes, action, message_id)
+    plan = []   # (date_iso, groups_on, changes, message_id)
     for date_iso in sorted(data["days"]):
-        groups = data["days"][date_iso]
+        groups_on = data["days"][date_iso]
         old = days_state.get(date_iso)
         if old is None:
-            if not has_any_outage(groups):
+            if not has_any_outage(groups_on):
                 continue                       # графік на цей день ще не опубліковано / відключень немає
-            plan.append((date_iso, groups, {}, "new", None))
+            plan.append((date_iso, groups_on, {}, None))
         else:
-            changes = diff_groups(old["groups"], groups)
+            changes = diff_groups(old["groups"], groups_on)
             if changes:
-                plan.append((date_iso, groups, changes, "edit", old.get("message_id")))
+                plan.append((date_iso, groups_on, changes, old.get("message_id")))
             else:
-                old["update"] = update         # лише оновилась дата — нічого не публікуємо
+                old["update"] = update         # змінилась лише дата оновлення — нічого не публікуємо
 
     if not plan:
         print("Змін немає.")
@@ -135,24 +149,25 @@ def main(argv=None) -> int:
             save_state(state)
         return 0
 
-    # 3. Малюємо
-    images = render_many([(d, update, g, ch) for d, g, ch, _, _ in plan])
+    # 3. Малюємо (на картинці й у тексті — періоди БЕЗ світла)
+    off = {d: {g: invert(iv) for g, iv in groups_on.items()} for d, groups_on, _, _ in plan}
+    images = render_many([(d, update, off[d], ch) for d, _, ch, _ in plan])
 
-    # 4. Публікуємо
+    # 4. Публікуємо: кожна зміна — окремий новий пост
     outdir = Path("out")
     if dry:
         outdir.mkdir(exist_ok=True)
-    for (date_iso, groups, changes, action, mid), jpg in zip(plan, images):
-        caption = build_caption(date_iso, update, groups, changes)
+    for (date_iso, groups_on, changes, _), jpg in zip(plan, images):
+        caption = build_caption(date_iso, update, off[date_iso], changes)
+        kind = "update" if changes else "new"
         if dry:
-            (outdir / f"{date_iso}_{action}.jpg").write_bytes(jpg)
-            print(f"[dry-run] {date_iso} {action}\n{caption}\n---")
-            days_state[date_iso] = {"groups": groups, "message_id": mid or 0, "update": update}
+            (outdir / f"{date_iso}_{kind}.jpg").write_bytes(jpg)
+            print(f"[dry-run] {date_iso} {kind} (довжина підпису {plain_len(caption)})\n{caption}\n---")
+            days_state[date_iso] = {"groups": groups_on, "message_id": 0, "update": update}
             continue
-        # Кожна зміна графіка — окремий новий пост (старі пости не чіпаємо)
-        message_id = tg.send_photo(token, chat, jpg, caption)
+        message_id = publish(token, chat, jpg, caption)
         print(f"Опубліковано {'оновлення' if changes else 'графік'} {date_iso} (message {message_id})")
-        days_state[date_iso] = {"groups": groups, "message_id": message_id, "update": update}
+        days_state[date_iso] = {"groups": groups_on, "message_id": message_id, "update": update}
 
     # 5. Прибираємо старі дні зі стану
     for old_date in sorted(days_state)[:-KEEP_DAYS]:

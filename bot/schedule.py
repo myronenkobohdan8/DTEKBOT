@@ -112,11 +112,43 @@ def has_any_outage(groups: dict) -> bool:
     return any(iv != ["00:00-24:00"] for iv in groups.values())
 
 
-def diff_groups(prev: dict, new: dict) -> dict:
-    """{група: {'prev': [...], 'new': [...], 'added': [...]}} лише для змінених черг."""
+def _to_min(s: str) -> int:
+    return int(s[:2]) * 60 + int(s[3:])
+
+
+def _fmt_min(m: int) -> str:
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def invert(on: list) -> list:
+    """Інтервали «світло є» -> інтервали «світла немає»."""
+    out, cur = [], 0
+    for iv in on:
+        a, b = (_to_min(x) for x in iv.split("-"))
+        if a > cur:
+            out.append(f"{_fmt_min(cur)}-{_fmt_min(a)}")
+        cur = b
+    if cur < 1440:
+        out.append(f"{_fmt_min(cur)}-24:00")
+    return out
+
+
+def diff_groups(prev_on: dict, new_on: dict) -> dict:
+    """Змінені черги. Порівнюємо «світло є» (так збережено в state.json),
+    а результат віддаємо в «світла немає»: {група: {'prev': [...], 'new': [...], 'added': [...]}}."""
     changes = {}
     for g in GROUPS:
-        p, n = prev.get(g, []), new.get(g, [])
-        if p != n:
+        p_on, n_on = prev_on.get(g, []), new_on.get(g, [])
+        if p_on != n_on:
+            p, n = invert(p_on), invert(n_on)
             changes[g] = {"prev": p, "new": n, "added": [i for i in n if i not in p]}
     return changes
+
+
+WEEKDAYS_ACC = ["понеділок", "вівторок", "середу", "четвер", "пʼятницю", "суботу", "неділю"]
+
+
+def day_label_acc(date_iso: str) -> str:
+    """'четвер, 12 листопада' (для «на …»)."""
+    d = datetime.fromisoformat(date_iso)
+    return f"{WEEKDAYS_ACC[d.weekday()]}, {d.day} {MONTHS[d.month - 1]}"

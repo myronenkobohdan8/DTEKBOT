@@ -1,4 +1,7 @@
-"""Малює картинку графіка вмикань: HTML/CSS -> JPEG через Playwright."""
+"""Малює картинку 1:1 «Графік відключень світла»: HTML/CSS -> JPEG через Playwright.
+
+Усі передані сюди інтервали — це періоди БЕЗ світла.
+"""
 import base64
 import html as H
 import os
@@ -6,108 +9,116 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from .schedule import GROUPS, day_label, ivs_text, pretty, total_hours_text
+from .schedule import GROUPS, day_label, pretty, total_hours_text
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
-W, HGT, SCALE = 1080, 1440, 1.5
+SIZE, SCALE = 1080, 1.5
+
+SOURCE_TEXT = "Джерело: ДТЕК"
+CHANNEL_TEXT = "t.me/your_boryspil"
 
 BLUE = "#0B4BAE"      # синій з логотипа
 YELLOW = "#FFEB1F"    # жовтий з логотипа
 INK = "#262B33"
+RED = "#C62828"
 
 
 def _b64(path: Path, mime: str) -> str:
     return f"data:{mime};base64," + base64.b64encode(path.read_bytes()).decode()
 
 
-BOLT = ('<svg class="bolt" viewBox="0 0 24 24"><path d="M13.5 1 4 13.5h6.2L9 23l10-13.2h-6.4z" '
-        f'fill="{YELLOW}" stroke="{INK}" stroke-width="1.4" stroke-linejoin="round"/></svg>')
+# Перекреслена блискавка (світла немає)
+BOLT_OFF = ('<svg class="bolt" viewBox="0 0 24 24">'
+            f'<path d="M13.5 1 4 13.5h6.2L9 23l10-13.2h-6.4z" fill="{INK}"/>'
+            '<path d="M3 3 21 22" stroke="#fff" stroke-width="3.8" stroke-linecap="round"/>'
+            f'<path d="M3 3 21 22" stroke="{INK}" stroke-width="1.9" stroke-linecap="round"/></svg>')
+MOON = ('<svg class="moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" '
+        'fill="#7b8794"/></svg>')
 
 CSS = f"""
 *{{box-sizing:border-box;margin:0;padding:0}}
-html,body{{width:{W}px;height:{HGT}px}}
+html,body{{width:{SIZE}px;height:{SIZE}px}}
 body{{font-family:'Montserrat','Inter','DejaVu Sans',sans-serif;color:{INK};
   background:#cfe0f3 url('__BG__') center/cover no-repeat;position:relative;overflow:hidden}}
-.header{{position:absolute;left:40px;right:40px;top:34px;height:170px;display:flex;align-items:center;gap:30px}}
-.logo{{height:150px;width:auto;flex:none}}
-.title{{flex:1}}
-.title h1{{font-size:46px;font-weight:800;line-height:1.08;letter-spacing:-.5px}}
-.title .day{{font-size:34px;font-weight:700;color:{BLUE};margin-top:6px}}
-.title .upd{{font-size:22px;font-weight:500;color:#4a5568;margin-top:8px}}
-.grid{{position:absolute;left:40px;right:40px;top:232px;bottom:76px;display:grid;
-  grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(4,1fr);gap:16px}}
-.card{{position:relative;background:rgba(255,255,255,.86);border-radius:24px;padding:16px 18px 14px;
-  display:flex;flex-direction:column;box-shadow:0 6px 18px rgba(20,50,100,.14)}}
-.card.changed{{box-shadow:0 0 0 4px {YELLOW},0 6px 18px rgba(20,50,100,.18)}}
-.tag{{position:absolute;top:-12px;right:16px;background:{YELLOW};color:{INK};font-size:16px;
-  font-weight:800;padding:3px 12px;border-radius:12px;letter-spacing:.3px}}
-.top{{display:flex;align-items:center;justify-content:space-between}}
-.pill{{background:{BLUE};color:#fff;font-size:34px;font-weight:800;padding:2px 18px;border-radius:15px}}
-.hrs{{text-align:right;font-size:17px;font-weight:500;color:#5b6575;line-height:1.2}}
-.hrs b{{display:block;font-size:19px;font-weight:700;color:{INK}}}
-.list{{flex:1;display:flex;flex-direction:column;justify-content:center;gap:5px;margin-top:6px}}
-.row{{display:flex;align-items:center;gap:10px;font-size:31px;font-weight:700;
-  font-variant-numeric:tabular-nums;white-space:nowrap}}
-.bolt{{width:24px;height:24px;flex:none}}
-.row.new .t{{text-decoration:underline;text-decoration-thickness:5px;text-decoration-color:#E53935;
-  text-underline-offset:6px;background:linear-gradient(transparent 0,rgba(255,235,31,.7) 0);
-  padding:0 6px;margin:0 -6px;border-radius:6px}}
-.was{{font-size:17px;font-weight:600;color:#8a1f1f;line-height:1.25;margin-top:4px}}
-.was s{{text-decoration-thickness:2px;font-weight:500}}
-.row.all .t{{font-size:27px}}
-.row.none{{font-size:25px;color:#6b7280;font-weight:600}}
-.footer{{position:absolute;left:40px;right:40px;bottom:26px;display:flex;justify-content:space-between;
-  align-items:center;font-size:20px;font-weight:600;color:#3b4656}}
-.legend span.u{{text-decoration:underline;text-decoration-thickness:4px;text-decoration-color:#E53935;
-  text-underline-offset:5px;background:rgba(255,235,31,.7);padding:0 6px;border-radius:5px;color:{INK}}}
+.header{{position:absolute;left:34px;right:34px;top:24px;height:150px;display:flex;
+  align-items:center;justify-content:space-between;gap:24px}}
+.title h1{{font-size:44px;font-weight:800;line-height:1.1;letter-spacing:-.4px}}
+.title .day{{display:flex;align-items:center;gap:14px;font-size:32px;font-weight:700;color:{BLUE};margin-top:6px}}
+.badge{{background:{YELLOW};color:{INK};font-size:17px;font-weight:800;padding:4px 14px;border-radius:12px;
+  letter-spacing:.4px}}
+.title .upd{{font-size:21px;font-weight:500;color:#4a5568;margin-top:8px}}
+.logo{{height:128px;width:auto;flex:none}}
+.grid{{position:absolute;left:34px;right:34px;top:188px;bottom:68px;display:grid;
+  grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(3,1fr);gap:13px}}
+.card{{position:relative;background:rgba(255,255,255,.88);border-radius:20px;padding:12px 13px 10px;
+  display:flex;flex-direction:column;box-shadow:0 5px 16px rgba(20,50,100,.14);min-width:0}}
+.card.changed{{box-shadow:0 0 0 4px {YELLOW},0 5px 16px rgba(20,50,100,.18)}}
+.tag{{position:absolute;top:-11px;right:12px;background:{YELLOW};color:{INK};font-size:13px;
+  font-weight:800;padding:2px 10px;border-radius:10px;letter-spacing:.3px}}
+.top{{display:flex;align-items:center;justify-content:space-between;gap:6px}}
+.pill{{background:{BLUE};color:#fff;font-size:29px;font-weight:800;padding:1px 13px;border-radius:12px}}
+.hrs{{display:flex;align-items:center;gap:5px;line-height:1.15}}
+.moon{{width:19px;height:19px;flex:none}}
+.hrs .tx{{font-size:13px;font-weight:500;color:#5b6575}}
+.hrs .tx b{{display:block;font-size:15px;font-weight:800;color:{RED};white-space:nowrap}}
+.hrs.ok .tx b{{color:#1b7f3b}}
+.list{{flex:1;display:flex;flex-direction:column;justify-content:center;gap:9px;margin-top:4px}}
+.row{{display:flex;align-items:center;gap:8px;font-size:27px;font-weight:700;
+  font-variant-numeric:tabular-nums;white-space:nowrap;letter-spacing:-.3px}}
+.bolt{{width:25px;height:25px;flex:none}}
+.row.new .t{{text-decoration:underline;text-decoration-thickness:4px;text-decoration-color:{RED};
+  text-underline-offset:5px;background:rgba(255,235,31,.75);padding:0 5px;margin:0 -5px;border-radius:5px}}
+.row.none{{font-size:20px;color:#1b7f3b;font-weight:700;justify-content:center;text-align:center}}
+.footer{{position:absolute;left:34px;right:34px;bottom:22px;display:flex;align-items:center;
+  justify-content:space-between;font-size:20px;font-weight:600;color:#3b4656}}
+.footer .src{{display:flex;gap:38px;align-items:center}}
+.footer .src .ch{{color:{BLUE};font-weight:700}}
+.legend span.u{{text-decoration:underline;text-decoration-thickness:3px;text-decoration-color:{RED};
+  text-underline-offset:4px;background:rgba(255,235,31,.75);padding:0 5px;border-radius:5px;color:{INK}}}
 """
 
 
-def build_html(date_iso: str, update: str, groups: dict, changes: dict = None) -> str:
+def build_html(date_iso: str, update: str, groups_off: dict, changes: dict = None) -> str:
     changes = changes or {}
     date_txt, weekday = day_label(date_iso)
     cards = []
     for g in GROUPS:
-        ivs = groups[g]
+        ivs = groups_off[g]
         added = set(changes.get(g, {}).get("added", []))
-        if not ivs:
-            rows = '<div class="row none">Світла немає весь день</div>'
-        elif ivs == ["00:00-24:00"]:
-            cls = "row all new" if added else "row all"
-            rows = f'<div class="{cls}">{BOLT}<span class="t">Світло є весь день</span></div>'
-        else:
+        if ivs:
             rows = "".join(
-                f'<div class="row{" new" if i in added else ""}">{BOLT}<span class="t">{H.escape(pretty(i))}</span></div>'
-                for i in ivs)
+                f'<div class="row{" new" if i in added else ""}">{BOLT_OFF}'
+                f'<span class="t">{H.escape(pretty(i))}</span></div>' for i in ivs)
+            hrs = (f'<div class="hrs">{MOON}<div class="tx">без світла'
+                   f'<b>{H.escape(total_hours_text(ivs))}</b></div></div>')
+        else:
+            rows = '<div class="row none">Відключень немає</div>'
+            hrs = '<div class="hrs ok"><div class="tx"><b>світло є</b></div></div>'
         tag = '<div class="tag">ЗМІНЕНО</div>' if g in changes else ""
-        was = (f'<div class="was">було: <s>{H.escape(ivs_text(changes[g]["prev"]))}</s></div>'
-               if g in changes else "")
-        cards.append(
-            f'<div class="card{" changed" if g in changes else ""}">{tag}'
-            f'<div class="top"><div class="pill">{g}</div>'
-            f'<div class="hrs">зі світлом<b>{H.escape(total_hours_text(ivs))}</b></div></div>'
-            f'<div class="list">{rows}</div>{was}</div>')
+        cards.append(f'<div class="card{" changed" if g in changes else ""}">{tag}'
+                     f'<div class="top"><div class="pill">{g}</div>{hrs}</div>'
+                     f'<div class="list">{rows}</div></div>')
 
-    legend = ('<div class="legend"><span class="u">Підкреслено</span> — нові або змінені години</div>'
-              if changes else "<div></div>")
+    badge = '<span class="badge">ОНОВЛЕННЯ</span>' if changes else ""
+    legend = ('<div class="legend"><span class="u">Підкреслено</span> — нові години</div>' if changes else "<div></div>")
     css = CSS.replace("__BG__", _b64(ASSETS / "background.png", "image/png"))
     return f"""<!doctype html><html lang="uk"><head><meta charset="utf-8">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&display=swap&subset=cyrillic" rel="stylesheet">
 <style>{css}</style></head><body>
 <div class="header">
-  <img class="logo" src="{_b64(ASSETS / 'logo.png', 'image/png')}">
-  <div class="title"><h1>{'Оновлення графіка вмикань' if changes else 'Графік вмикань світла'}</h1>
-    <div class="day">{H.escape(date_txt)} · {H.escape(weekday)}</div>
+  <div class="title"><h1>Графік відключень світла</h1>
+    <div class="day"><span>{H.escape(date_txt)} · {H.escape(weekday)}</span>{badge}</div>
     <div class="upd">Оновлено ДТЕК: {H.escape(update)}</div></div>
+  <img class="logo" src="{_b64(ASSETS / 'logo.png', 'image/png')}">
 </div>
 <div class="grid">{''.join(cards)}</div>
-<div class="footer">{legend}<div>Київська область · години, коли світло Є</div></div>
+<div class="footer"><div class="src"><span>{H.escape(SOURCE_TEXT)}</span><span class="ch">{H.escape(CHANNEL_TEXT)}</span></div>{legend}</div>
 </body></html>"""
 
 
 def render_many(jobs: list) -> list:
-    """jobs: [(date_iso, update, groups, changes)] -> [jpeg bytes]. Один запуск браузера на всі картинки."""
+    """jobs: [(date_iso, update, groups_off, changes)] -> [jpeg bytes]. Один запуск браузера на всі картинки."""
     out = []
     with sync_playwright() as p:
         launch_args = {"headless": True}
@@ -115,12 +126,12 @@ def render_many(jobs: list) -> list:
             launch_args["executable_path"] = os.environ["CHROME_PATH"]
         browser = p.chromium.launch(**launch_args)
         try:
-            ctx = browser.new_context(viewport={"width": W, "height": HGT}, device_scale_factor=SCALE,
+            ctx = browser.new_context(viewport={"width": SIZE, "height": SIZE}, device_scale_factor=SCALE,
                                       locale="uk-UA")
-            for date_iso, update, groups, changes in jobs:
+            for date_iso, update, groups_off, changes in jobs:
                 page = ctx.new_page()
                 try:
-                    page.set_content(build_html(date_iso, update, groups, changes),
+                    page.set_content(build_html(date_iso, update, groups_off, changes),
                                      wait_until="load", timeout=30000)
                 except Exception:  # noqa: BLE001  (наприклад, не завантажився шрифт — малюємо запасним)
                     pass
@@ -129,7 +140,8 @@ def render_many(jobs: list) -> list:
                 except Exception:  # noqa: BLE001
                     pass
                 page.wait_for_timeout(300)
-                out.append(page.screenshot(type="jpeg", quality=92, clip={"x": 0, "y": 0, "width": W, "height": HGT}))
+                out.append(page.screenshot(type="jpeg", quality=92,
+                                           clip={"x": 0, "y": 0, "width": SIZE, "height": SIZE}))
                 page.close()
         finally:
             browser.close()
