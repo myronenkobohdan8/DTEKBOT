@@ -95,6 +95,14 @@ def pretty(interval: str) -> str:
     return interval.replace("-", "–")
 
 
+def ivs_text(ivs: list) -> str:
+    if not ivs:
+        return "світла немає весь день"
+    if ivs == ["00:00-24:00"]:
+        return "світло є весь день"
+    return ", ".join(pretty(i) for i in ivs)
+
+
 def day_label(date_iso: str):
     d = datetime.fromisoformat(date_iso)
     return f"{d.day} {MONTHS[d.month - 1]}", WEEKDAYS[d.weekday()]

@@ -34,7 +34,6 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
           ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
-          NOTIFY_REPLY: ${{ vars.NOTIFY_REPLY || '1' }}
 
       - name: Save state
         if: always()

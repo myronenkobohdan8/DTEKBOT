@@ -15,7 +15,7 @@ from . import telegram as tg
 from .fetch import fetch_html
 from .render import render_many
 from .schedule import (GROUPS, ParseError, day_label, diff_groups, has_any_outage,
-                       parse_fact, pretty)
+                       ivs_text, parse_fact)
 
 STATE_PATH = Path(os.environ.get("STATE_PATH", "state.json"))
 KEEP_DAYS = 4
@@ -33,14 +33,6 @@ def save_state(state: dict):
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def ivs_text(ivs: list) -> str:
-    if not ivs:
-        return "світла немає весь день"
-    if ivs == ["00:00-24:00"]:
-        return "світло є весь день"
-    return ", ".join(pretty(i) for i in ivs)
-
-
 def changes_lines(changes: dict) -> list:
     lines = []
     for g, c in changes.items():
@@ -50,12 +42,17 @@ def changes_lines(changes: dict) -> list:
 
 def build_caption(date_iso: str, update: str, groups: dict, changes: dict) -> str:
     date_txt, weekday = day_label(date_iso)
-    head = (f"💡 <b>Графік вмикань світла на {date_txt}</b> ({weekday})\n"
-            f"🕒 Оновлено ДТЕК: {H.escape(update)}")
+    if changes:
+        head = (f"🔄 <b>Оновлення графіка вмикань на {date_txt}</b> ({weekday})\n"
+                f"🕒 Оновлено ДТЕК: {H.escape(update)}")
+    else:
+        head = (f"💡 <b>Графік вмикань світла на {date_txt}</b> ({weekday})\n"
+                f"🕒 Оновлено ДТЕК: {H.escape(update)}")
     parts = [head]
     if changes:
         lines = changes_lines(changes)
-        parts.append("🔄 <b>Зміни в графіку:</b>\n" + "\n".join(lines))
+        names = ", ".join(changes)
+        parts.append(f"❗ <b>Змінилися черги: {names}</b>\n(було → стало)\n" + "\n".join(lines))
     full = "\n".join(f"<b>{g}</b>: {H.escape(ivs_text(groups[g]))}" for g in GROUPS)
     parts.append("⚡ <b>Світло є:</b>\n" + full)
     caption = "\n\n".join(parts)
@@ -63,17 +60,12 @@ def build_caption(date_iso: str, update: str, groups: dict, changes: dict) -> st
         caption = "\n\n".join(parts[:2])
     if len(caption) > CAPTION_LIMIT:                       # потім скорочуємо перелік змін
         lines = changes_lines(changes)
-        while lines and len("\n\n".join([head, "🔄 <b>Зміни в графіку:</b>\n" + "\n".join(lines) + "\n…"])) > CAPTION_LIMIT:
+        mk = lambda ls: "\n\n".join([head, f"❗ <b>Змінилися черги: {', '.join(changes)}</b>\n(було → стало)\n"
+                                    + "\n".join(ls) + ("\n…" if len(ls) < len(lines) else "")])
+        while lines and len(mk(lines)) > CAPTION_LIMIT:
             lines.pop()
-        caption = "\n\n".join([head, "🔄 <b>Зміни в графіку:</b>\n" + "\n".join(lines) + "\n…"])
+        caption = mk(lines)
     return caption[:CAPTION_LIMIT]
-
-
-def reply_text(date_iso: str, changes: dict) -> str:
-    date_txt, _ = day_label(date_iso)
-    lines = changes_lines(changes)
-    text = f"🔄 <b>Оновлення графіка на {date_txt}</b>\n" + "\n".join(lines)
-    return text if len(text) <= 4000 else text[:3990] + "\n…"
 
 
 def alert(token, admin_chat, text):
@@ -94,7 +86,6 @@ def main(argv=None) -> int:
     token = os.environ.get("BOT_TOKEN")
     chat = os.environ.get("CHANNEL_ID")
     admin = os.environ.get("ADMIN_CHAT_ID")
-    notify_reply = os.environ.get("NOTIFY_REPLY", "1") == "1"
     dry = args.dry_run
     if not dry and not (token and chat):
         print("Не задано BOT_TOKEN або CHANNEL_ID", file=sys.stderr)
@@ -158,25 +149,9 @@ def main(argv=None) -> int:
             print(f"[dry-run] {date_iso} {action}\n{caption}\n---")
             days_state[date_iso] = {"groups": groups, "message_id": mid or 0, "update": update}
             continue
-        message_id = mid
-        if action == "edit" and mid:
-            try:
-                tg.edit_photo(token, chat, mid, jpg, caption)
-                print(f"Оновлено пост {date_iso} (message {mid})")
-            except tg.TelegramError as e:
-                if "not modified" in str(e).lower():
-                    pass
-                else:
-                    print(f"Не вдалося відредагувати ({e}); публікую новий пост")
-                    message_id = tg.send_photo(token, chat, jpg, caption)
-        else:
-            message_id = tg.send_photo(token, chat, jpg, caption)
-            print(f"Опубліковано {date_iso} (message {message_id})")
-        if action == "edit" and notify_reply and changes:
-            try:
-                tg.send_text(token, chat, reply_text(date_iso, changes), reply_to=message_id)
-            except tg.TelegramError as e:
-                print("Не вдалося надіслати повідомлення про зміни:", e)
+        # Кожна зміна графіка — окремий новий пост (старі пости не чіпаємо)
+        message_id = tg.send_photo(token, chat, jpg, caption)
+        print(f"Опубліковано {'оновлення' if changes else 'графік'} {date_iso} (message {message_id})")
         days_state[date_iso] = {"groups": groups, "message_id": message_id, "update": update}
 
     # 5. Прибираємо старі дні зі стану

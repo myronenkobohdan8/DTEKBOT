@@ -6,7 +6,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from .schedule import GROUPS, day_label, pretty, total_hours_text
+from .schedule import GROUPS, day_label, ivs_text, pretty, total_hours_text
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 W, HGT, SCALE = 1080, 1440, 1.5
@@ -52,6 +52,8 @@ body{{font-family:'Montserrat','Inter','DejaVu Sans',sans-serif;color:{INK};
 .row.new .t{{text-decoration:underline;text-decoration-thickness:5px;text-decoration-color:#E53935;
   text-underline-offset:6px;background:linear-gradient(transparent 0,rgba(255,235,31,.7) 0);
   padding:0 6px;margin:0 -6px;border-radius:6px}}
+.was{{font-size:17px;font-weight:600;color:#8a1f1f;line-height:1.25;margin-top:4px}}
+.was s{{text-decoration-thickness:2px;font-weight:500}}
 .row.all .t{{font-size:27px}}
 .row.none{{font-size:25px;color:#6b7280;font-weight:600}}
 .footer{{position:absolute;left:40px;right:40px;bottom:26px;display:flex;justify-content:space-between;
@@ -77,12 +79,14 @@ def build_html(date_iso: str, update: str, groups: dict, changes: dict = None) -
             rows = "".join(
                 f'<div class="row{" new" if i in added else ""}">{BOLT}<span class="t">{H.escape(pretty(i))}</span></div>'
                 for i in ivs)
-        tag = '<div class="tag">ОНОВЛЕНО</div>' if g in changes else ""
+        tag = '<div class="tag">ЗМІНЕНО</div>' if g in changes else ""
+        was = (f'<div class="was">було: <s>{H.escape(ivs_text(changes[g]["prev"]))}</s></div>'
+               if g in changes else "")
         cards.append(
             f'<div class="card{" changed" if g in changes else ""}">{tag}'
             f'<div class="top"><div class="pill">{g}</div>'
             f'<div class="hrs">зі світлом<b>{H.escape(total_hours_text(ivs))}</b></div></div>'
-            f'<div class="list">{rows}</div></div>')
+            f'<div class="list">{rows}</div>{was}</div>')
 
     legend = ('<div class="legend"><span class="u">Підкреслено</span> — нові або змінені години</div>'
               if changes else "<div></div>")
@@ -93,7 +97,7 @@ def build_html(date_iso: str, update: str, groups: dict, changes: dict = None) -
 <style>{css}</style></head><body>
 <div class="header">
   <img class="logo" src="{_b64(ASSETS / 'logo.png', 'image/png')}">
-  <div class="title"><h1>Графік вмикань світла</h1>
+  <div class="title"><h1>{'Оновлення графіка вмикань' if changes else 'Графік вмикань світла'}</h1>
     <div class="day">{H.escape(date_txt)} · {H.escape(weekday)}</div>
     <div class="upd">Оновлено ДТЕК: {H.escape(update)}</div></div>
 </div>
