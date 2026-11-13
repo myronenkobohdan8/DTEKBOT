@@ -9,6 +9,10 @@ on:
         description: "Опублікувати поточний графік примусово (навіть без змін)"
         type: boolean
         default: false
+      check:
+        description: "Лише перевірити доступ бота до каналу (нічого не публікує)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write              # щоб зберігати state.json
@@ -29,12 +33,13 @@ jobs:
           python-version: "3.12"
 
       - name: Install Playwright
+        if: ${{ !inputs.check }}
         run: |
           pip install playwright
           playwright install --with-deps chromium
 
       - name: Run bot
-        run: python -m bot.main
+        run: python -m bot.main ${{ inputs.check && '--check' || '' }}
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHANNEL_ID: ${{ secrets.CHANNEL_ID }}

@@ -16,8 +16,6 @@ import sys
 from pathlib import Path
 
 from . import telegram as tg
-from .fetch import fetch_html
-from .render import render_many
 from .schedule import (GROUPS, ParseError, day_label_acc, diff_groups, has_any_outage,
                        invert, parse_fact)
 
@@ -82,6 +80,34 @@ def publish(token: str, chat: str, jpg: bytes, caption: str) -> int:
     return message_id
 
 
+def check_access(token: str, chat: str) -> int:
+    """Нічого не публікує: перевіряє, що бот бачить канал і має право писати."""
+    ok = True
+    try:
+        me = tg.call(token, "getMe")
+        print(f"Бот: @{me.get('username')} (id {me['id']})")
+        info = tg.call(token, "getChat", {"chat_id": chat})
+        print(f"Канал: «{info.get('title')}», @{info.get('username')}, тип: {info.get('type')}")
+        m = tg.call(token, "getChatMember", {"chat_id": chat, "user_id": me["id"]})
+        status = m.get("status")
+        print(f"Статус бота в каналі: {status}")
+        if status == "creator":
+            print("Права: власник каналу — можна все")
+        elif status == "administrator":
+            can_post = bool(m.get("can_post_messages"))
+            print(f"Право публікувати повідомлення: {'так' if can_post else 'НІ'}")
+            print(f"Право редагувати повідомлення інших: {'так' if m.get('can_edit_messages') else 'ні (не потрібно)'}")
+            ok = can_post
+        else:
+            print("Бот не є адміністратором каналу")
+            ok = False
+    except tg.TelegramError as e:
+        print(f"ПОМИЛКА Telegram: {e}")
+        ok = False
+    print("ВЕРДИКТ:", "ДОСТУП Є, публікувати можна" if ok else "ПРОБЛЕМА — див. вище")
+    return 0 if ok else 1
+
+
 def alert(token, admin_chat, text):
     print("ALERT:", text)
     if token and admin_chat:
@@ -95,6 +121,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--fixture")
+    ap.add_argument("--check", action="store_true", help="лише перевірити доступ бота до каналу, нічого не публікувати")
     ap.add_argument("--force", action="store_true", help="опублікувати поточний графік, навіть якщо змін немає")
     args = ap.parse_args(argv)
 
@@ -102,6 +129,14 @@ def main(argv=None) -> int:
     chat = os.environ.get("CHANNEL_ID")
     admin = os.environ.get("ADMIN_CHAT_ID")
     dry = args.dry_run
+    if args.check:
+        if not (token and chat):
+            print("Не задано BOT_TOKEN або CHANNEL_ID", file=sys.stderr)
+            return 1
+        return check_access(token, chat)
+
+    from .fetch import fetch_html          # імпорт тут, щоб режиму --check не був потрібен Playwright
+    from .render import render_many
     force = args.force or os.environ.get("FORCE", "").lower() == "true"
     if not dry and not (token and chat):
         print("Не задано BOT_TOKEN або CHANNEL_ID", file=sys.stderr)
