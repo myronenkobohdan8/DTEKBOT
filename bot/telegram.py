@@ -29,17 +29,22 @@ def call(token: str, method: str, fields: dict = None, files: dict = None, _retr
                  f'filename="{fname}"\r\nContent-Type: {ctype}\r\n\r\n').encode()
         body += data + b"\r\n"
     body += f"--{boundary}--\r\n".encode()
-    req = urllib.request.Request(
-        f"{API}/bot{token}/{method}", data=bytes(body),
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    url = f"{API}/bot{token}/{method}"
+    if not fields and not files:                      # запит без параметрів — звичайний GET
+        req = urllib.request.Request(url)
+    else:
+        req = urllib.request.Request(
+            url, data=bytes(body),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             data = json.load(r)
     except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace")
         try:
-            data = json.load(e)
+            data = json.loads(raw)
         except Exception:  # noqa: BLE001
-            data = {"ok": False, "description": f"HTTP {e.code}", "error_code": e.code}
+            data = {"ok": False, "description": f"HTTP {e.code}: {raw[:200]}", "error_code": e.code}
     if not data.get("ok"):
         retry_after = (data.get("parameters") or {}).get("retry_after")
         if data.get("error_code") == 429 and retry_after and _retry:
