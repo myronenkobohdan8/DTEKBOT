@@ -58,7 +58,7 @@ def _groups_text(groups_off: dict, names: list) -> str:
 def build_caption(date_iso: str, update: str, groups_off: dict, changes: dict) -> str:
     label = day_label_acc(date_iso)
     if changes:
-        head = f"<b>💡 Оновлено графік відключень на {label}</b>\n\n<b>Зміни для наступних черг:</b>\n"
+        head = f"<b>💡 Оновлено графік відключень на {label}</b>\n\n<b>❌ Зміни у періодах вимкнень для наступних черг:</b>\n"
         body = _groups_text(groups_off, [g for g in GROUPS if g in changes])
     else:
         head = f"<b>💡 Графік відключень на {label}</b>\n\n<b>❌ Періоди вимкнень:</b>\n\n"
